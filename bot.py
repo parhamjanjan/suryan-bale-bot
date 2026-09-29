@@ -39,7 +39,7 @@ if not BALE_BOT_TOKEN:
 # CONFIG
 # =========================================================
 
-ADMIN_ID = 602834325
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 SHIPPING_POST = "پست"
 SHIPPING_PICKUP = "دریافت توسط مشتری"
