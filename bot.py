@@ -39,10 +39,14 @@ if not BALE_BOT_TOKEN:
 # CONFIG
 # =========================================================
 
-ADMIN_ID = os.getenv("ADMIN_ID")
+ADMIN_ID = 602834325
 
 SHIPPING_POST = "پست"
 SHIPPING_PICKUP = "دریافت توسط مشتری"
+
+# هزینه‌های ثابت دریافت سفارش
+POST_FEE = 200_000
+PICKUP_PACKAGING_FEE = 45_000
 
 bot = Bot(token=BALE_BOT_TOKEN)
 
@@ -191,6 +195,33 @@ def normalize_price(value: str) -> Optional[str]:
         return None
 
     return f"{number:,} تومان"
+
+
+def get_shipping_fee(order: OrderData) -> int:
+    """هزینه اضافه‌شونده بر اساس روش دریافت سفارش."""
+    if order.shipping_method == SHIPPING_POST:
+        return POST_FEE
+
+    if order.shipping_method == SHIPPING_PICKUP:
+        return PICKUP_PACKAGING_FEE
+
+    return 0
+
+
+def add_shipping_fee(order: OrderData, base_price: str) -> str:
+    """قیمت پایه را با هزینه ارسال/بسته‌بندی جمع می‌کند."""
+    normalized = normalize_price(base_price)
+
+    if not normalized:
+        raise ValueError("قیمت پایه معتبر نیست.")
+
+    base_number = int(
+        normalized.replace(",", "").replace(" تومان", "")
+    )
+
+    total = base_number + get_shipping_fee(order)
+
+    return f"{total:,} تومان"
 
 
 # =========================================================
@@ -606,28 +637,6 @@ def cancel_keyboard():
     return keyboard
 
 
-def phone_keyboard():
-
-    keyboard = MenuKeyboardMarkup()
-
-    keyboard.add(
-        MenuKeyboardButton(
-            text="📱 ارسال شماره تماس",
-            request_contact=True
-        ),
-        row=1
-    )
-
-    keyboard.add(
-        MenuKeyboardButton(
-            text="❌ لغو سفارش"
-        ),
-        row=2
-    )
-
-    return keyboard
-
-
 def product_keyboard():
 
     keyboard = MenuKeyboardMarkup()
@@ -718,7 +727,7 @@ def shipping_keyboard():
 
     keyboard.add(
         MenuKeyboardButton(
-            text="🏪 دریافت توسط مشتری"
+            text="🏪 تحویل حضوری در محل فروشگاه توسط مشتری"
         ),
         row=2
     )
@@ -885,10 +894,8 @@ async def ask_phone(
 ):
 
     await message.reply(
-        "📱 لطفاً شماره تماس خود را ارسال کنید.\n\n"
-        "می‌توانید روی دکمه زیر بزنید تا شماره تلفن "
-        "به‌صورت خودکار ارسال شود.",
-        components=phone_keyboard()
+        "📱 لطفاً شماره تماس خود را به‌صورت متنی ارسال کنید.",
+        components=cancel_keyboard()
     )
 
 
@@ -982,7 +989,7 @@ async def ask_price_status(
 ):
 
     await message.reply(
-        "💰 آیا قیمت محصول را می‌دانید؟",
+        "💰 آیا قیمت محصول و هزینه ارسال و موجودی را می‌دانید؟ و با ادمین هماهنگ کردید؟",
         components=price_keyboard()
     )
 
@@ -996,7 +1003,7 @@ async def ask_payment(
     )
 
     await message.reply(
-        "💳 مبلغ سفارش شما:\n\n"
+        "💳 مبلغ نهایی سفارش شما (با احتساب هزینه دریافت):\n\n"
 
         f"💰 {order.price}\n\n"
 
@@ -1107,9 +1114,10 @@ def customer_order_summary(
         f"{order.full_address}\n\n"
 
         "🚚 روش دریافت\n"
-        f"{order.shipping_method}\n\n"
+        f"{order.shipping_method}\n"
+        f"💸 هزینه ارسال/بسته‌بندی: {get_shipping_fee(order):,} تومان\n\n"
 
-        "💰 مبلغ سفارش\n"
+        "💰 مبلغ نهایی سفارش\n"
         f"{order.price}\n\n"
 
         "📝 توضیحات\n"
@@ -1155,7 +1163,8 @@ async def send_price_request_to_admin(
         "📍 آدرس:\n"
         f"{order.full_address}\n\n"
 
-        f"🚚 روش ارسال: {order.shipping_method}\n\n"
+        f"🚚 روش ارسال: {order.shipping_method}\n"
+        f"💸 هزینه دریافت: {get_shipping_fee(order):,} تومان\n\n"
 
         "📝 توضیحات مشتری:\n"
         f"{order.customer_description or 'ندارد'}\n\n"
@@ -1164,7 +1173,7 @@ async def send_price_request_to_admin(
 
         "⚠️ برای تعیین قیمت، روی همین پیام Reply کنید.\n\n"
 
-        "فقط مبلغ را ارسال کنید:\n"
+        "فقط قیمت خودِ محصولات را ارسال کنید؛ هزینه دریافت خودکار اضافه می‌شود:\n"
         "850000\n\n"
 
         "یا:\n"
@@ -1188,6 +1197,58 @@ async def send_price_request_to_admin(
         order.order_id,
         user_id
     )
+    
+    for item in order.cart:
+
+        if (
+            item.product_type == "photo"
+            and item.product_file_id
+        ):
+
+            try:
+
+                await bot.send_photo(
+                    ADMIN_ID,
+                    InputFile(
+                        item.product_file_id
+                    ),
+                    caption=(
+                        f"📷 محصول سفارش\n"
+                        f"🆔 {order.order_id}"
+                    )
+                )
+
+            except Exception as e:
+
+                print(
+                    "SEND PRODUCT PHOTO ERROR:",
+                    repr(e)
+                )
+
+        elif (
+            item.product_type == "document"
+            and item.product_file_id
+        ):
+
+            try:
+
+                await bot.send_document(
+                    ADMIN_ID,
+                    InputFile(
+                        item.product_file_id
+                    ),
+                    caption=(
+                        f"📄 محصول سفارش\n"
+                        f"🆔 {order.order_id}"
+                    )
+                )
+
+            except Exception as e:
+
+                print(
+                    "SEND PRODUCT DOCUMENT ERROR:",
+                    repr(e)
+                )
 
     if admin_message_id is not None:
 
@@ -1446,7 +1507,15 @@ async def process_admin_price(
         # ذخیره قیمت
         # =================================================
 
-        order.price = price
+        try:
+            order.price = add_shipping_fee(order, price)
+        except ValueError:
+            await message.reply(
+                "❌ قیمت معتبر نیست.\n\n"
+                "مثال:\n"
+                "850000"
+            )
+            return
 
         order.price_known = True
 
@@ -1481,7 +1550,7 @@ async def process_admin_price(
 
                 "━━━━━━━━━━━━━━\n"
 
-                "💰 مبلغ قابل پرداخت:\n\n"
+                "💰 مبلغ قابل پرداخت (مبلغ محصول + هزینه ارسال یا بسته بندی):\n\n"
                 f"💵 {order.price}\n"
 
                 "━━━━━━━━━━━━━━\n\n"
@@ -1653,9 +1722,10 @@ async def send_final_order_to_admin(
         "📍 آدرس کامل\n"
         f"{order.full_address}\n\n"
 
-        f"🚚 روش دریافت: {order.shipping_method}\n\n"
+        f"🚚 روش دریافت: {order.shipping_method}\n"
+        f"💸 هزینه دریافت: {get_shipping_fee(order):,} تومان\n\n"
 
-        f"💰 قیمت: {order.price}\n\n"
+        f"💰 مبلغ نهایی: {order.price}\n\n"
 
         "📝 توضیحات مشتری\n"
         f"{order.customer_description or 'ندارد'}\n\n"
@@ -1972,8 +2042,8 @@ async def on_message(
             if not phone:
 
                 await message.reply(
-                    "لطفاً شماره تماس خود را ارسال کنید.",
-                    components=phone_keyboard()
+                    "لطفاً شماره تماس خود را به‌صورت متنی ارسال کنید.",
+                    components=cancel_keyboard()
                 )
 
                 return
@@ -2313,7 +2383,10 @@ async def on_message(
                 order.state = PAYMENT
 
                 await message.reply(
-                    "💰 لطفاً مبلغ سفارش را وارد کنید.\n\n"
+                    "💰 لطفاً قیمت خودِ محصولات را وارد کنید.\n\n"
+                    "⚠️ هزینه دریافت سفارش به‌صورت خودکار اضافه می‌شود.\n"
+                    "• پست: ۲۰۰٬۰۰۰ تومان\n"
+                    "• دریافت توسط مشتری: ۴۵٬۰۰۰ تومان هزینه بسته‌بندی\n\n"
                     "مثال:\n"
                     "850000",
                     components=cancel_keyboard()
@@ -2389,7 +2462,16 @@ async def on_message(
 
                 return
 
-            order.price = price
+            try:
+                order.price = add_shipping_fee(order, price)
+            except ValueError:
+                await message.reply(
+                    "❌ مبلغ واردشده معتبر نیست.\n\n"
+                    "مثال:\n"
+                    "850000",
+                    components=cancel_keyboard()
+                )
+                return
 
             order.state = RECEIPT
 
