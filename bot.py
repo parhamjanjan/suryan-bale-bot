@@ -1197,7 +1197,7 @@ async def send_price_request_to_admin(
         order.order_id,
         user_id
     )
-    
+
     for item in order.cart:
 
         if (
@@ -2313,8 +2313,8 @@ async def on_message(
                 )
 
             elif normalized in [
-                "🏪 دریافت توسط مشتری",
-                "دریافت توسط مشتری"
+                "🏪 تحویل حضوری در محل فروشگاه توسط مشتری",
+                "تحویل حضوری در محل فروشگاه توسط مشتری"
             ]:
 
                 order.shipping_method = (
